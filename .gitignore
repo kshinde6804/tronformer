@@ -13,14 +13,14 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Large or intermediate artifacts we don't ship
-# (we keep tron_env_c_v2_final.pt and tron_env_c_xfmr_best.pt explicitly)
-tron_env_a*.pt
-tron_env_c_100k.pt
-tron_env_c_200k.pt
-tron_env_c_v2_best.pt
-tron_env_c_xfmr_final.pt
+# Training artifacts we don't ship — keep only the two winners we explicitly add
+*.pt
+!tron_env_c_v2_final.pt
+!tron_env_c_xfmr_best.pt
 *.log
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Local tooling state
+.claude/

@@ -1,9 +1,11 @@
-"""Train + evaluate a TRON agent in Env A from the ICAIF '24 PyMarketSim paper.
+"""Train + evaluate a TRON agent against ZI background traders.
 
-Env A parameters (Table 3 of Mascioli et al., 2024):
+Defaults to Env C from Table 3 of Mascioli et al., ICAIF '24:
     N = 25 agents (24 ZI + 1 TRON), q_max = 10, f_bar = 1e5, kappa = 0.01,
-    T = 2000, lambda = 0.0005, shock_var = 1e6, pv_var = 5e6.
-The ZI shade range used here is [450, 540] (per user-supplied prior config).
+    T = 2000, lambda = 0.012, shock_var = 2e4, pv_var = 2e7.
+ZI background: shade = [450, 540], eta = 0.5.
+
+Override any env parameter via CLI flags (--lam, --shock-var, --pv-var, --sim-time).
 """
 
 from __future__ import annotations
@@ -24,9 +26,9 @@ from marketsim.tron.trainer import TRONTrainer, TrainerConfig
 def make_env(
     seed: int | None = None,
     zi_eta: float = 0.5,
-    lam: float = 5e-4,
-    shock_var: float = 1e6,
-    pv_var: float = 5e6,
+    lam: float = 0.012,
+    shock_var: float = 2e4,
+    pv_var: float = 2e7,
     sim_time: int = 2_000,
 ) -> gym.Env:
     env = gym.make(
@@ -110,19 +112,19 @@ def evaluate_zi_baseline(env: gym.Env, num_episodes: int, zi_eta: float = 0.5) -
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--episodes", type=int, default=50_000)
+    parser.add_argument("--episodes", type=int, default=100_000)
     parser.add_argument("--eval-episodes", type=int, default=500)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--checkpoint", type=str, default="tron_env_a.pt")
-    parser.add_argument("--log-every", type=int, default=500)
-    parser.add_argument("--eps-decay", type=int, default=20_000)
+    parser.add_argument("--checkpoint", type=str, default="tron_final.pt")
+    parser.add_argument("--log-every", type=int, default=5000)
+    parser.add_argument("--eps-decay", type=int, default=40_000)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--buffer-size", type=int, default=50_000)
     parser.add_argument("--mid-checkpoint", type=str, default=None,
                         help="Save an intermediate checkpoint at episodes/2.")
-    parser.add_argument("--lam", type=float, default=5e-4)
-    parser.add_argument("--shock-var", type=float, default=1e6)
-    parser.add_argument("--pv-var", type=float, default=5e6)
+    parser.add_argument("--lam", type=float, default=0.012)
+    parser.add_argument("--shock-var", type=float, default=2e4)
+    parser.add_argument("--pv-var", type=float, default=2e7)
     parser.add_argument("--sim-time", type=int, default=2000)
     parser.add_argument("--best-checkpoint", type=str, default=None)
     parser.add_argument("--best-window", type=int, default=5000)

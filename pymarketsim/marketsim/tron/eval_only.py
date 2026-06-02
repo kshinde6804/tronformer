@@ -11,7 +11,7 @@ import torch
 import gymnasium as gym
 
 import marketsim.wrappers  # noqa: F401  registers PyMarketSim-TRON-v0
-from marketsim.tron.train_env_a import evaluate, evaluate_zi_baseline, make_env
+from marketsim.tron.train import evaluate, evaluate_zi_baseline, make_env
 from marketsim.tron.trainer import TRONTrainer, TrainerConfig
 
 
@@ -20,9 +20,9 @@ def main() -> None:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--episodes", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--lam", type=float, default=5e-4)
-    parser.add_argument("--shock-var", type=float, default=1e6)
-    parser.add_argument("--pv-var", type=float, default=5e6)
+    parser.add_argument("--lam", type=float, default=0.012)
+    parser.add_argument("--shock-var", type=float, default=2e4)
+    parser.add_argument("--pv-var", type=float, default=2e7)
     parser.add_argument("--sim-time", type=int, default=2000)
     args = parser.parse_args()
 
