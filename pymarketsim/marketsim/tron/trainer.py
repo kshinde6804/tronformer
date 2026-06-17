@@ -19,7 +19,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, optim
 
-from marketsim.tron.network import build_network
+from marketsim.tron.network import build_network, remap_state_dict
 
 
 @dataclass
@@ -300,5 +300,6 @@ class TRONTrainer:
 
     def load(self, path: str) -> None:
         ckpt = torch.load(path, map_location=self.device)
-        self.q_net.load_state_dict(ckpt["q_net"])
-        self.target_net.load_state_dict(ckpt["q_net"])
+        sd = remap_state_dict(ckpt["q_net"], self.cfg.arch)
+        self.q_net.load_state_dict(sd, strict=True)
+        self.target_net.load_state_dict(sd, strict=True)

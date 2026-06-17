@@ -17,6 +17,11 @@ Both networks have the same `forward(obs, hidden)` signature returning
 
 The dueling heads output Q-values for 21 `s` choices and 21 `eta` choices
 independently:  Q_s = V_s + (A_s - mean(A_s)); same for eta.
+
+## State-dict compatibility
+
+Old checkpoints (pre-refactor) used flat attribute names. `remap_state_dict`
+performs a key remap so old `.pt` files load into the refactored classes.
 """
 
 import math
@@ -24,6 +29,52 @@ from typing import Optional, Tuple, Union
 
 import torch
 from torch import nn
+
+
+class InputProjection(nn.Module):
+    """Shared Linear→ReLU input projection used by both TRON variants."""
+
+    def __init__(self, input_dim: int, hidden_dim: int) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
+
+
+class FactoredDuelingHeads(nn.Module):
+    """Shared dueling heads for the factored (s, eta) action space."""
+
+    def __init__(self, hidden_dim: int, n_s: int, n_eta: int) -> None:
+        super().__init__()
+        self.n_s = n_s
+        self.n_eta = n_eta
+        # Advantage head: outputs n_s + n_eta values.
+        self.adv_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, n_s + n_eta),
+        )
+        # Value head: one scalar per factored action group (2 total).
+        self.val_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, 2),
+        )
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Return (q_s, q_eta) from recurrent output x."""
+        adv = self.adv_head(x)                    # (..., n_s + n_eta)
+        val = self.val_head(x)                    # (..., 2)
+        adv_s, adv_eta = adv.split([self.n_s, self.n_eta], dim=-1)
+        val_s = val[..., 0:1]
+        val_eta = val[..., 1:2]
+        q_s = val_s + (adv_s - adv_s.mean(dim=-1, keepdim=True))
+        q_eta = val_eta + (adv_eta - adv_eta.mean(dim=-1, keepdim=True))
+        return q_s, q_eta
 
 
 class TRONNet(nn.Module):
@@ -39,24 +90,9 @@ class TRONNet(nn.Module):
         self.n_eta = n_eta
         self.hidden_dim = hidden_dim
 
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-        )
+        self.input_proj = InputProjection(input_dim, hidden_dim)
         self.lstm = nn.LSTM(hidden_dim, hidden_dim, batch_first=True)
-
-        # Advantage head: outputs n_s + n_eta = 42 (by default).
-        self.adv_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, n_s + n_eta),
-        )
-        # Value head: one scalar per factored action group (2 total by default).
-        self.val_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 2),
-        )
+        self.heads = FactoredDuelingHeads(hidden_dim, n_s, n_eta)
 
     def forward(
         self,
@@ -71,16 +107,10 @@ class TRONNet(nn.Module):
             hidden: final LSTM hidden state (h, c), each (1, batch, hidden_dim)
         """
         if obs.dim() == 2:
-            obs = obs.unsqueeze(1)  # (batch, 1, input_dim)
-        x = self.encoder(obs)
+            obs = obs.unsqueeze(1)
+        x = self.input_proj(obs)
         out, hidden = self.lstm(x, hidden)
-        adv = self.adv_head(out)               # (batch, seq, n_s + n_eta)
-        val = self.val_head(out)               # (batch, seq, 2)
-        adv_s, adv_eta = adv.split([self.n_s, self.n_eta], dim=-1)
-        val_s = val[..., 0:1]
-        val_eta = val[..., 1:2]
-        q_s = val_s + (adv_s - adv_s.mean(dim=-1, keepdim=True))
-        q_eta = val_eta + (adv_eta - adv_eta.mean(dim=-1, keepdim=True))
+        q_s, q_eta = self.heads(out)
         return q_s, q_eta, hidden
 
     def initial_hidden(self, batch_size: int, device: torch.device) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -119,10 +149,7 @@ class TRONTransformerNet(nn.Module):
         self.d_model = d_model
         self.max_seq = max_seq
 
-        self.input_proj = nn.Sequential(
-            nn.Linear(input_dim, d_model),
-            nn.ReLU(),
-        )
+        self.input_proj = InputProjection(input_dim, d_model)
         # Sinusoidal positional encoding, registered as buffer so it moves with .to(device).
         self.register_buffer("pos_enc", _sinusoidal_pos_encoding(max_seq, d_model), persistent=False)
 
@@ -136,17 +163,7 @@ class TRONTransformerNet(nn.Module):
             norm_first=True,   # pre-norm: more stable for small RL transformers
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-
-        self.adv_head = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.ReLU(),
-            nn.Linear(d_model, n_s + n_eta),
-        )
-        self.val_head = nn.Sequential(
-            nn.Linear(d_model, d_model),
-            nn.ReLU(),
-            nn.Linear(d_model, 2),
-        )
+        self.heads = FactoredDuelingHeads(d_model, n_s, n_eta)
 
     def forward(
         self,
@@ -187,18 +204,53 @@ class TRONTransformerNet(nn.Module):
         )
         out = self.encoder(x_pe, mask=causal_mask, is_causal=True)  # (B, T, d_model)
 
-        adv = self.adv_head(out)
-        val = self.val_head(out)
-        adv_s, adv_eta = adv.split([self.n_s, self.n_eta], dim=-1)
-        val_s = val[..., 0:1]
-        val_eta = val[..., 1:2]
-        q_s = val_s + (adv_s - adv_s.mean(dim=-1, keepdim=True))
-        q_eta = val_eta + (adv_eta - adv_eta.mean(dim=-1, keepdim=True))
+        q_s, q_eta = self.heads(out)
 
         return q_s, q_eta, x_cache  # x_cache is the un-positional cache
 
     def initial_hidden(self, batch_size: int, device: torch.device) -> torch.Tensor:
         return torch.zeros(batch_size, 0, self.d_model, device=device)
+
+
+# ---------------------------------------------------------------------------
+# Key remap for backward compatibility with pre-refactor checkpoints
+# ---------------------------------------------------------------------------
+
+# Old key → new key mappings for TRONNet (LSTM).
+# Pre-refactor: encoder.0.weight → input_proj.net.0.weight
+#               adv_head.* → heads.adv_head.*
+#               val_head.* → heads.val_head.*
+_LSTM_KEY_MAP = [
+    ("encoder.0.", "input_proj.net.0."),
+    ("encoder.2.", "input_proj.net.2."),  # (unused; encoder had no index 2, but safe)
+    ("adv_head.", "heads.adv_head."),
+    ("val_head.", "heads.val_head."),
+]
+
+# Old key → new key mappings for TRONTransformerNet.
+# Pre-refactor: input_proj.0.* → input_proj.net.0.*
+#               adv_head.* → heads.adv_head.*
+#               val_head.* → heads.val_head.*
+_XFMR_KEY_MAP = [
+    ("input_proj.0.", "input_proj.net.0."),
+    ("input_proj.2.", "input_proj.net.2."),  # (unused; same reason)
+    ("adv_head.", "heads.adv_head."),
+    ("val_head.", "heads.val_head."),
+]
+
+
+def remap_state_dict(state_dict: dict, arch: str) -> dict:
+    """Remap old (pre-refactor) checkpoint keys to the current layout."""
+    key_map = _LSTM_KEY_MAP if arch == "lstm" else _XFMR_KEY_MAP
+    new_sd = {}
+    for k, v in state_dict.items():
+        new_k = k
+        for old_prefix, new_prefix in key_map:
+            if new_k.startswith(old_prefix):
+                new_k = new_prefix + new_k[len(old_prefix):]
+                break
+        new_sd[new_k] = v
+    return new_sd
 
 
 def build_network(
