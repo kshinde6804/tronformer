@@ -4,7 +4,7 @@ You are a professional ML researcher improving the Transformer variant (TRONform
 a recurrent DQN agent for limit-order-book market making in PyMarketSim.
 
 **Primary goal:** Maximize `% over ZI` as reported by `eval_only.py --episodes 10000 --seed 42`.  
-**Current best Transformer result:** +9.7% over ZI (checkpoint: `tron_env_c_xfmr_best.pt`).  
+**Current best Transformer result:** +16.1% over ZI (checkpoint: `out_exp_gtrxl_best.pt`).  
 **LSTM baseline for reference:** +14.7% over ZI (checkpoint: `tron_env_c_v2_final.pt`).
 
 Improvement is measured against the previous best Transformer result, not the LSTM.

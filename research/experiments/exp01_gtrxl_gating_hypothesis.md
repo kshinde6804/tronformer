@@ -40,6 +40,19 @@ PE, causal mask, training recipe, env parameters.
 **Confidence:** medium-high (GTrXL reliably improves over standard Transformer in RL;
 uncertainty is whether TRON's 64-step context is long enough to benefit from gating).
 
+## Results (2026-06-17)
+
+```
+ZI   mean PnL = +1253.59  sd=2423.76  sem=24.24
+TRON mean PnL = +1455.96  sd=2503.66  sem=25.04
+delta         = +202.37  sem=34.85  z=5.81
+             = +16.1% over ZI
+```
+
+**Decision: KEEP.** Beats previous best (+9.7%, z=3.50) by +6.4 percentage points (z=5.81).
+GTrXL training best_pnl was at ep65000 (mean_pnl=1463.64 rolling window during training).
+Best checkpoint: `out_exp_gtrxl_best.pt` — promoted to new master baseline.
+
 ## Failure modes
 
 1. No improvement: gating overhead not needed at max_seq=64 (short enough that standard

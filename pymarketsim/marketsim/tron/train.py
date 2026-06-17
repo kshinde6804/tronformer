@@ -131,10 +131,13 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--target-tau", type=float, default=0.005)
     parser.add_argument("--reward-clip", type=float, default=5.0)
-    parser.add_argument("--arch", type=str, default="lstm", choices=["lstm", "transformer"])
+    parser.add_argument("--arch", type=str, default="lstm",
+                        choices=["lstm", "transformer", "gated-transformer"])
     parser.add_argument("--xfmr-layers", type=int, default=2)
     parser.add_argument("--xfmr-heads", type=int, default=4)
     parser.add_argument("--xfmr-max-seq", type=int, default=64)
+    parser.add_argument("--gtrxl-bg", type=float, default=2.0,
+                        help="GRU gate bias init for gated-transformer (higher → closer to identity at init)")
     args = parser.parse_args()
 
     env_kwargs = dict(
@@ -153,6 +156,13 @@ def main() -> None:
             num_layers=args.xfmr_layers,
             nhead=args.xfmr_heads,
             max_seq=args.xfmr_max_seq,
+        )
+    elif args.arch == "gated-transformer":
+        arch_kwargs = dict(
+            num_layers=args.xfmr_layers,
+            nhead=args.xfmr_heads,
+            max_seq=args.xfmr_max_seq,
+            gru_bg=args.gtrxl_bg,
         )
     cfg = TrainerConfig(
         device=args.device,
