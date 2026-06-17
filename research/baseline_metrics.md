@@ -29,9 +29,21 @@ delta         = +122.20  sem=34.88  z=3.50
 
 This exactly matches the RESEARCH.md stated value. ✓
 
+## GTrXL best checkpoint (`out_exp_gtrxl_best.pt`) — exp01, 2026-06-17
+
+```
+ZI   mean PnL = +1253.59  sd=2423.76  sem=24.24
+TRON mean PnL = +1455.96  sd=2503.66  sem=25.04
+delta         = +202.37  sem=34.85  z=5.81
+             = +16.1% over ZI
+```
+
+Best checkpoint saved at ep65000. Beats LSTM ceiling (+12.5%) by +3.6 pp. ✓
+
 ## Reference for experiments
 
-- **Beat this to improve:** +9.7% over ZI (z=3.50) from `tron_env_c_xfmr_best.pt`
+- **Beat this to improve:** +16.1% over ZI (z=5.81) from `out_exp_gtrxl_best.pt`
 - **LSTM ceiling reference:** +12.5% over ZI (z=4.47) from `tron_env_c_v2_final.pt`
+- **Step 0 Transformer baseline:** +9.7% over ZI (z=3.50) from `tron_env_c_xfmr_best.pt`
 - ZI baseline: mean PnL = +1253.59 (used for all future % calculations with this seed)
 - Eval config: `eval_only.py --episodes 10000 --seed 42`
