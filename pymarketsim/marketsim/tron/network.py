@@ -119,6 +119,68 @@ class TRONNet(nn.Module):
         return h, c
 
 
+class GRUGate(nn.Module):
+    """GRU-type gating used in GTrXL (Parisotto et al. 2020).
+
+    Replaces the residual addition `x = x + sublayer(x)` with a learned gate:
+        r = σ(Wr·y + Ur·x)
+        z = σ(Wz·y + Uz·x − bg)   # bg≫0 → z≈0 → identity init
+        h = tanh(Wg·y + Ug·(r⊙x))
+        out = (1−z)·x + z·h
+    """
+
+    def __init__(self, dim: int, bg: float = 2.0) -> None:
+        super().__init__()
+        self.Wr = nn.Linear(dim, dim, bias=False)
+        self.Ur = nn.Linear(dim, dim, bias=False)
+        self.Wz = nn.Linear(dim, dim, bias=False)
+        self.Uz = nn.Linear(dim, dim, bias=False)
+        self.Wg = nn.Linear(dim, dim, bias=False)
+        self.Ug = nn.Linear(dim, dim, bias=False)
+        self.bg = nn.Parameter(torch.full((dim,), bg))
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        r = torch.sigmoid(self.Wr(y) + self.Ur(x))
+        z = torch.sigmoid(self.Wz(y) + self.Uz(x) - self.bg)
+        h = torch.tanh(self.Wg(y) + self.Ug(x * r))
+        return (1.0 - z) * x + z * h
+
+
+class GatedTransformerLayer(nn.Module):
+    """Single GTrXL layer: pre-norm multi-head attention + FFN, both with GRU gating."""
+
+    def __init__(
+        self,
+        d_model: int,
+        nhead: int,
+        dim_feedforward: int,
+        dropout: float = 0.0,
+        bg: float = 2.0,
+    ) -> None:
+        super().__init__()
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        self.ff = nn.Sequential(
+            nn.Linear(d_model, dim_feedforward),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim_feedforward, d_model),
+            nn.Dropout(dropout),
+        )
+        self.gate1 = GRUGate(d_model, bg)
+        self.gate2 = GRUGate(d_model, bg)
+
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        # Pre-norm attention with GRU gate
+        normed = self.norm1(x)
+        a, _ = self.attn(normed, normed, normed, attn_mask=attn_mask, is_causal=True, need_weights=False)
+        x = self.gate1(x, a)
+        # Pre-norm FFN with GRU gate
+        x = self.gate2(x, self.ff(self.norm2(x)))
+        return x
+
+
 def _sinusoidal_pos_encoding(max_len: int, d_model: int) -> torch.Tensor:
     pe = torch.zeros(max_len, d_model)
     position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
@@ -212,6 +274,76 @@ class TRONTransformerNet(nn.Module):
         return torch.zeros(batch_size, 0, self.d_model, device=device)
 
 
+class TRONGatedTransformerNet(nn.Module):
+    """Dueling DQN with a GTrXL (GRU-gated causal Transformer) recurrent block.
+
+    Identical to TRONTransformerNet except the recurrent block: standard
+    residual connections are replaced with GRU-type gating (Parisotto et al. 2020).
+    The cache scheme (hidden = pre-positional embedding cache) is unchanged.
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        n_s: int = 21,
+        n_eta: int = 21,
+        d_model: int = 128,
+        nhead: int = 4,
+        num_layers: int = 2,
+        dim_feedforward: int = 256,
+        dropout: float = 0.0,
+        max_seq: int = 64,
+        gru_bg: float = 2.0,
+    ) -> None:
+        super().__init__()
+        self.n_s = n_s
+        self.n_eta = n_eta
+        self.d_model = d_model
+        self.max_seq = max_seq
+
+        self.input_proj = InputProjection(input_dim, d_model)
+        self.register_buffer("pos_enc", _sinusoidal_pos_encoding(max_seq, d_model), persistent=False)
+        self.encoder = nn.ModuleList([
+            GatedTransformerLayer(d_model, nhead, dim_feedforward, dropout, gru_bg)
+            for _ in range(num_layers)
+        ])
+        self.heads = FactoredDuelingHeads(d_model, n_s, n_eta)
+
+    def forward(
+        self,
+        obs: torch.Tensor,
+        hidden: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if obs.dim() == 2:
+            obs = obs.unsqueeze(1)
+
+        x_new = self.input_proj(obs)
+        if hidden is not None and hidden.size(1) > 0:
+            x_cache = torch.cat([hidden, x_new], dim=1)
+        else:
+            x_cache = x_new
+
+        if x_cache.size(1) > self.max_seq:
+            x_cache = x_cache[:, -self.max_seq:]
+
+        T = x_cache.size(1)
+        x_pe = x_cache + self.pos_enc[:T].unsqueeze(0)
+
+        causal_mask = torch.triu(
+            torch.full((T, T), float("-inf"), device=x_pe.device),
+            diagonal=1,
+        )
+        out = x_pe
+        for layer in self.encoder:
+            out = layer(out, attn_mask=causal_mask)
+
+        q_s, q_eta = self.heads(out)
+        return q_s, q_eta, x_cache
+
+    def initial_hidden(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        return torch.zeros(batch_size, 0, self.d_model, device=device)
+
+
 # ---------------------------------------------------------------------------
 # Key remap for backward compatibility with pre-refactor checkpoints
 # ---------------------------------------------------------------------------
@@ -259,10 +391,12 @@ def build_network(
     n_s: int = 21,
     n_eta: int = 21,
     **kwargs,
-) -> Union[TRONNet, TRONTransformerNet]:
+) -> Union[TRONNet, TRONTransformerNet, TRONGatedTransformerNet]:
     arch = arch.lower()
     if arch == "lstm":
         return TRONNet(input_dim=input_dim, n_s=n_s, n_eta=n_eta, **kwargs)
     if arch in ("transformer", "tron-transformer", "xfmr"):
         return TRONTransformerNet(input_dim=input_dim, n_s=n_s, n_eta=n_eta, **kwargs)
+    if arch in ("gated-transformer", "gated-xfmr", "gtrxl"):
+        return TRONGatedTransformerNet(input_dim=input_dim, n_s=n_s, n_eta=n_eta, **kwargs)
     raise ValueError(f"Unknown arch: {arch!r}")
