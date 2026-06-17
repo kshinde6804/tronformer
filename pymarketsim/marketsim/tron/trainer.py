@@ -35,6 +35,7 @@ class Transition:
 class TrainerConfig:
     gamma: float = 0.99
     lr: float = 1e-4
+    encoder_lr_scale: float = 1.0       # multiplier for encoder (input_proj+recurrent) LR vs heads LR
     batch_size: int = 32                # number of episodes per update
     buffer_size: int = 50_000           # episodes
     target_tau: float = 0.005           # soft (Polyak) target update per grad step; set 0 to disable
@@ -126,7 +127,16 @@ class TRONTrainer:
         for p in self.target_net.parameters():
             p.requires_grad = False
 
-        self.optimizer = optim.Adam(self.q_net.parameters(), lr=self.cfg.lr)
+        if self.cfg.encoder_lr_scale != 1.0:
+            head_ids = {id(p) for p in self.q_net.heads.parameters()}
+            enc_params = [p for p in self.q_net.parameters() if id(p) not in head_ids]
+            head_params = list(self.q_net.heads.parameters())
+            self.optimizer = optim.Adam([
+                {"params": enc_params,  "lr": self.cfg.lr * self.cfg.encoder_lr_scale},
+                {"params": head_params, "lr": self.cfg.lr},
+            ])
+        else:
+            self.optimizer = optim.Adam(self.q_net.parameters(), lr=self.cfg.lr)
         self.buffer = ReplayBuffer(self.cfg.buffer_size)
 
         self.episodes_seen = 0

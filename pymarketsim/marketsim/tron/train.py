@@ -138,6 +138,9 @@ def main() -> None:
     parser.add_argument("--xfmr-max-seq", type=int, default=64)
     parser.add_argument("--gtrxl-bg", type=float, default=2.0,
                         help="GRU gate bias init for gated-transformer (higher → closer to identity at init)")
+    parser.add_argument("--encoder-lr-scale", type=float, default=1.0,
+                        help="LR multiplier for encoder params (input_proj+recurrent) vs heads. "
+                             "Luo et al. NeurIPS 2024 recommends 0.1.")
     args = parser.parse_args()
 
     env_kwargs = dict(
@@ -169,6 +172,7 @@ def main() -> None:
         eps_decay_episodes=args.eps_decay,
         buffer_size=args.buffer_size,
         lr=args.lr,
+        encoder_lr_scale=args.encoder_lr_scale,
         target_tau=args.target_tau,
         reward_clip=args.reward_clip,
         arch=args.arch,
