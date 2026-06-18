@@ -53,6 +53,19 @@ updates.
 3. `train.py`: add `--encoder-lr-scale` CLI arg (forwarded to TrainerConfig)
 4. The scale is saved in `cfg.__dict__` → checkpoint is self-describing
 
+## Results (2026-06-17)
+
+```
+ZI   mean PnL = +1253.59  sd=2423.76  sem=24.24
+TRON mean PnL = +1450.08  sd=2492.36  sem=24.92
+delta         = +196.49  sem=34.77  z=5.65
+             = +15.7% over ZI
+```
+
+**Decision: DISCARD.** Previous best (GTrXL) was +16.1% (z=5.81). Difference of -0.4 pp
+is within noise (1σ ≈ 2.8%). GTrXL's gating likely already provides the optimization
+stability that lower encoder LR was meant to add. Consecutive non-improving: 1.
+
 ## Failure modes
 
 1. No improvement: encoder representations are stable enough at the full LR in our short-horizon
